@@ -9,7 +9,6 @@ import os
 import json
 import logging
 import asyncio
-from pathlib import Path
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,104 +30,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-CRIME_SEED_PATH = Path("app/data/crime_data.json")
-
-
-def crime_seed_identity(crime: dict) -> dict:
-    return {
-        "lat": float(crime["lat"]),
-        "lng": float(crime["lng"]),
-        "type": str(crime["type"]),
-        "severity": float(crime["severity"]),
-        "description": str(crime["description"]),
-    }
-
-
-async def sync_crime_data():
+async def seed_crime_data():
     """
-    Ensure MongoDB contains the seed crime dataset exactly once per seed record.
+    Pre-populate the database with crime reports if empty.
     """
-    logger.info("Synchronizing crime data into MongoDB...")
+    count = await CrimeReport.count()
+    if count > 10:
+        logger.info(f"CrimeReport collection already has {count} records. Skipping seed.")
+        return
+    logger.info("Seeding crime data into MongoDB...")
     try:
-        with CRIME_SEED_PATH.open("r", encoding="utf-8") as f:
-            seed_crimes = json.load(f)
+        with open("app/data/crime_data.json", "r") as f:
+            crimes = json.load(f)
+        crime_docs = [CrimeReport(**crime) for crime in crimes]
+        await CrimeReport.insert_many(crime_docs)
 
-        normalized_seed_crimes = [crime_seed_identity(crime) for crime in seed_crimes]
-        seed_keys = {
-            (
-                crime["lat"],
-                crime["lng"],
-                crime["type"],
-                crime["severity"],
-                crime["description"],
-            )
-            for crime in normalized_seed_crimes
-        }
+        logger.info(f"Seeded {len(crime_docs)} crime records successfully.")
 
-        from motor.motor_asyncio import AsyncIOMotorClient
-
-        client = AsyncIOMotorClient(settings.MONGODB_URL)
-        collection = client[settings.DATABASE_NAME][CrimeReport.Settings.name]
-        existing_docs = await collection.find(
-            {},
-            {
-                "_id": 1,
-                "lat": 1,
-                "lng": 1,
-                "type": 1,
-                "severity": 1,
-                "description": 1,
-            },
-        ).to_list(None)
-
-        seen_seed_docs = set()
-        duplicate_ids = []
-        for doc in existing_docs:
-            identity = (
-                float(doc.get("lat", 0.0)),
-                float(doc.get("lng", 0.0)),
-                str(doc.get("type", "")),
-                float(doc.get("severity", 0.0)),
-                str(doc.get("description", "")),
-            )
-
-            if identity not in seed_keys:
-                continue
-
-            if identity in seen_seed_docs:
-                duplicate_ids.append(doc["_id"])
-            else:
-                seen_seed_docs.add(identity)
-
-        if duplicate_ids:
-            result = await collection.delete_many({"_id": {"$in": duplicate_ids}})
-            logger.info("Removed %s duplicate seeded crime records.", result.deleted_count)
-
-        missing_crimes = [
-            crime
-            for crime in normalized_seed_crimes
-            if (
-                crime["lat"],
-                crime["lng"],
-                crime["type"],
-                crime["severity"],
-                crime["description"],
-            ) not in seen_seed_docs
-        ]
-
-        if missing_crimes:
-            await CrimeReport.insert_many([CrimeReport(**crime) for crime in missing_crimes])
-            logger.info("Inserted %s missing crime records.", len(missing_crimes))
-
-        final_count = await CrimeReport.count()
-        logger.info(
-            "Crime sync complete. Seed records=%s, collection records=%s",
-            len(normalized_seed_crimes),
-            final_count,
-        )
-        client.close()
     except Exception as e:
-        logger.error(f"Failed to synchronize crime data: {e}")
+        logger.error(f"Failed to seed crime data: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -151,8 +71,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Failed to create unique index on users.username: {e}")
 
-    # Synchronize seed crime data before routing requests use it
-    await sync_crime_data()
+    # Seed mock data if needed
+    await seed_crime_data()
 
     # Load Route Graph
     graph_path = settings.GRAPH_PATH

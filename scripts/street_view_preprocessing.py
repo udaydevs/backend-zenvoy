@@ -8,52 +8,22 @@ instead of being treated as visually unsafe.
 
 import os
 import random
-import math
+import time
 
 import osmnx as ox
 import requests
 from ultralytics import YOLO
 
 MAPILLARY_TOKEN = os.getenv("MAPILLARY_TOKEN")
-GRAPH_PATH = os.getenv("GRAPH_PATH", "app/data/delhi_walk.graphml")
-OUTPUT_GRAPH_PATH = os.getenv("OUTPUT_GRAPH_PATH", GRAPH_PATH)
-CONNAUGHT_PLACE_CENTER = (28.6315, 77.2167)
-CONNAUGHT_PLACE_RADIUS_METERS = float(
-    os.getenv("CONNAUGHT_PLACE_RADIUS_METERS", "1200")
-)
-MAX_EDGES_TO_PROCESS = int(os.getenv("CP_MAX_EDGES_TO_PROCESS", "300"))
 
 # Load model once.
 model = YOLO("yolov8n.pt")
 
 # Load graph once.
-G = ox.load_graphml(GRAPH_PATH)
+G = ox.load_graphml("app/data/delhi_walk.graphml")
 print(f"Total edges: {len(G.edges)}")
 
 image_cache = {}
-
-
-def haversine_distance_meters(lat1, lng1, lat2, lng2):
-    earth_radius = 6371000
-    lat1_rad = math.radians(float(lat1))
-    lat2_rad = math.radians(float(lat2))
-    delta_lat = math.radians(float(lat2) - float(lat1))
-    delta_lng = math.radians(float(lng2) - float(lng1))
-
-    a = (
-        math.sin(delta_lat / 2) ** 2
-        + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lng / 2) ** 2
-    )
-    return earth_radius * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-
-
-def is_connaught_place_coordinate(lat, lng):
-    return haversine_distance_meters(
-        lat,
-        lng,
-        CONNAUGHT_PLACE_CENTER[0],
-        CONNAUGHT_PLACE_CENTER[1],
-    ) <= CONNAUGHT_PLACE_RADIUS_METERS
 
 
 def get_mapillary_image(lat, lng):
@@ -158,32 +128,10 @@ def attach_node_image_metadata(node_id):
         node_data["image_available"] = True
 
 
-cp_edges = []
-for u, v, k, data in G.edges(keys=True, data=True):
-    u_lat = G.nodes[u].get("y")
-    u_lng = G.nodes[u].get("x")
-    v_lat = G.nodes[v].get("y")
-    v_lng = G.nodes[v].get("x")
+edges = list(G.edges(keys=True, data=True))
+edges = random.sample(edges, min(300, len(edges)))
 
-    if None in (u_lat, u_lng, v_lat, v_lng):
-        continue
-
-    mid_lat = (u_lat + v_lat) / 2
-    mid_lng = (u_lng + v_lng) / 2
-
-    if (
-        is_connaught_place_coordinate(u_lat, u_lng)
-        or is_connaught_place_coordinate(v_lat, v_lng)
-        or is_connaught_place_coordinate(mid_lat, mid_lng)
-    ):
-        cp_edges.append((u, v, k, data))
-
-edges = random.sample(cp_edges, min(MAX_EDGES_TO_PROCESS, len(cp_edges)))
-
-print(
-    f"Processing {len(edges)} Connaught Place edges "
-    f"(eligible={len(cp_edges)}, radius_m={CONNAUGHT_PLACE_RADIUS_METERS})..."
-)
+print(f"Processing {len(edges)} edges...")
 
 for idx, (u, v, k, data) in enumerate(edges):
     try:
@@ -213,6 +161,8 @@ for idx, (u, v, k, data) in enumerate(edges):
             f"| available={data['visual_score_available']}"
         )
 
+        time.sleep(0.2)
+
     except Exception as exc:
         print("Edge error:", exc)
         data["visual_score"] = 0.0
@@ -220,5 +170,5 @@ for idx, (u, v, k, data) in enumerate(edges):
         data["visual_score_source"] = "processing_error"
 
 
-ox.save_graphml(G, OUTPUT_GRAPH_PATH)
-print(f"Graph saved successfully to {OUTPUT_GRAPH_PATH}")
+ox.save_graphml(G, "graph_with_visual.graphml")
+print("Graph saved successfully")
