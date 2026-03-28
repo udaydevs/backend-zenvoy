@@ -1,0 +1,41 @@
+# Virtual environment
+venv/
+.venv/
+env/
+ 
+# Environment variables
+.env
+.env.local
+.env.production
+ 
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+ 
+
+# Cache directories
+cache/
+ 
+# IDE
+.vscode/
+.idea/
+ 
+# OS
+.DS_Store
+Thumbs.db
+ 
+# Docker
+*.env.docker
+ 
+# Pytest
+.pytest_cache/
+htmlcov/
+.coverage
+ 
+
+data
+
+
+app/data/*.graphml
